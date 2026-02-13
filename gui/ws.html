@@ -1,0 +1,132 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Recoil Client</title>
+<style>
+  body{font-family:system-ui;margin:14px;background:#0b0f14;color:#e9eef5}
+  .card{background:#121a24;border:1px solid #1f2b3a;border-radius:12px;padding:12px;margin-top:12px}
+  .pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#1b2635;border:1px solid #2a3a50;font-size:12px}
+  canvas{width:min(900px,95vw);height:260px;background:#0a111a;border-radius:12px;border:1px solid #1f2b3a}
+  .kv{display:grid;grid-template-columns:120px 1fr;gap:6px 10px;font-variant-numeric:tabular-nums}
+  .kv div:nth-child(odd){color:#a7b5c8}
+</style>
+</head>
+<body>
+<h2 style="margin:0 0 8px 0">Recoil room monitor</h2>
+
+<div class="card">
+  <div>Status: <span id="st" class="pill">idle</span></div>
+  <div style="margin-top:8px">Room: <b id="room"></b></div>
+
+  <div style="margin-top:10px" class="kv">
+    <div>t</div><div><b id="t">—</b></div>
+    <div>rate</div><div><b id="rate">—</b> crossings/s</div>
+    <div>raw</div><div><b id="raw">—</b></div>
+    <div>slope</div><div><b id="slope">—</b></div>
+    <div>GPS</div><div><b id="v">—</b> km/h</div>
+    <div>last msg</div><div><span id="msg" style="color:#a7b5c8"></span></div>
+  </div>
+</div>
+
+<div class="card">
+  <canvas id="c" width="900" height="260"></canvas>
+</div>
+
+<script>
+(() => {
+  const RELAY = "recoil-d002.onrender.com";
+  const st = document.getElementById("st");
+  const tEl = document.getElementById("t");
+  const rEl = document.getElementById("rate");
+  const rawEl = document.getElementById("raw");
+  const slopeEl = document.getElementById("slope");
+  const vEl = document.getElementById("v");
+  const msgEl = document.getElementById("msg");
+  const roomEl = document.getElementById("room");
+
+  const params = new URLSearchParams(location.search);
+  const room = params.get("room") || "default";
+  roomEl.textContent = room;
+
+  // GPS (requires https)
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition(
+      (pos) => {
+        const sp = pos.coords.speed;
+        vEl.textContent = (sp!=null && isFinite(sp)) ? (sp*3.6).toFixed(1) : "—";
+      },
+      (err) => { console.warn(err); vEl.textContent = "err"; },
+      { enableHighAccuracy:true, maximumAge:200, timeout:10000 }
+    );
+  } else vEl.textContent = "no geo";
+
+  // Graph of t (0..1)
+  const c = document.getElementById("c");
+  const ctx = c.getContext("2d");
+  const N = 600;
+  const buf = new Float32Array(N);
+  let n = 0;
+
+  function push(v){
+    if(n < N) buf[n++] = v;
+    else { buf.copyWithin(0,1); buf[N-1] = v; }
+  }
+  function draw(){
+    const w=c.width,h=c.height;
+    ctx.clearRect(0,0,w,h);
+    ctx.strokeStyle="rgba(255,255,255,0.10)";
+    for(let i=0;i<=5;i++){
+      const y=20+i*(h-40)/5;
+      ctx.beginPath(); ctx.moveTo(40,y); ctx.lineTo(w-10,y); ctx.stroke();
+    }
+    ctx.fillStyle="rgba(255,255,255,0.7)";
+    ctx.font="12px system-ui";
+    ctx.fillText("t (0..1)", 8, 16);
+
+    if(n<2) return;
+    const x0=40,x1=w-10,y0=h-20,y1=20;
+
+    ctx.strokeStyle="rgba(124,196,255,0.95)";
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    for(let i=0;i<n;i++){
+      const tt=i/(N-1);
+      const x=x0+(x1-x0)*tt;
+      const v=buf[i];
+      const y=y0 - v*(y0-y1);
+      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+
+  // Subscribe
+  const url = `wss://${RELAY}/ws?room=${encodeURIComponent(room)}&role=client`;
+  st.textContent = "connecting…";
+  const ws = new WebSocket(url);
+
+  ws.onopen  = () => st.textContent = "connected";
+  ws.onclose = () => st.textContent = "closed (reload)";
+  ws.onerror = () => st.textContent = "error";
+
+  ws.onmessage = (ev) => {
+    const s = (""+ev.data).trim();
+    msgEl.textContent = s;
+
+    const mt = s.match(/t=([0-9.]+)/);
+    const mr = s.match(/rate=([0-9.]+)/);
+    const mraw = s.match(/raw=([0-9\-]+)/);
+    const ms = s.match(/slope=([0-9\-]+)/);
+
+    if(mt){ const t = Math.max(0, Math.min(1, parseFloat(mt[1]))); tEl.textContent = t.toFixed(3); push(t); draw(); }
+    if(mr) rEl.textContent = parseFloat(mr[1]).toFixed(1);
+    if(mraw) rawEl.textContent = mraw[1];
+    if(ms) slopeEl.textContent = ms[1];
+  };
+
+  draw();
+})();
+</script>
+</body>
+</html>

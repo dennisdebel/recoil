@@ -24,6 +24,7 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 wss.on("connection", (ws, url) => {
+  console.log("NEW CONNECTION", url.search);
   const roomId = safe(url.searchParams.get("room"));
   const role = (url.searchParams.get("role") || "client").toLowerCase();
   const room = getRoom(roomId);
@@ -38,6 +39,7 @@ wss.on("connection", (ws, url) => {
     const msg = data.toString();
     room.lastMsg = msg;
     for (const c of room.clients) if (c.readyState === 1) c.send(msg);
+    console.log("MESSAGE FROM", role, ":", data.toString());
   });
 
   ws.on("close", () => {
